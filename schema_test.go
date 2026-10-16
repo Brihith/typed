@@ -96,6 +96,24 @@ func TestSchemaEnumDefaultTyped(t *testing.T) {
 	}
 }
 
+func TestSchemaSliceDefault(t *testing.T) {
+	type q struct {
+		Tags []string `json:"tags" default:"a,b"`
+		Nums []int    `json:"nums" default:"1,2"`
+	}
+	g := newRegistry()
+	if _, err := g.schemaFor(reflect.TypeOf(q{})); err != nil {
+		t.Fatal(err)
+	}
+	props := g.components()["q"].Properties
+	if got := mustJSON(t, props["tags"]); !strings.Contains(got, `"default":["a","b"]`) {
+		t.Errorf("tags: %s", got)
+	}
+	if got := mustJSON(t, props["nums"]); !strings.Contains(got, `"default":[1,2]`) {
+		t.Errorf("nums: %s", got)
+	}
+}
+
 func TestSchemaRecursive(t *testing.T) {
 	g := newRegistry()
 	if _, err := g.schemaFor(reflect.TypeOf(schemaNode{})); err != nil {

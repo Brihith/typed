@@ -82,6 +82,37 @@ func TestBindParams(t *testing.T) {
 	}
 }
 
+func TestQuerySliceDefault(t *testing.T) {
+	type q struct {
+		IDs []int `query:"id" default:"1,2"`
+	}
+	in, err := bindTo[q](t, newReq("GET", "/x", "", nil), 1<<20)
+	if err != nil || !reflect.DeepEqual(in.IDs, []int{1, 2}) {
+		t.Fatalf("in=%+v err=%+v", in, err)
+	}
+	ps, perr := mustPlan(t, reflect.TypeOf(q{})).parameters(newRegistry())
+	if perr != nil || !reflect.DeepEqual(ps[0].Schema.Default, []any{1, 2}) {
+		t.Fatalf("default = %#v err=%v", ps[0].Schema.Default, perr)
+	}
+}
+
+func TestBindBodyElementDefaults(t *testing.T) {
+	type item struct {
+		Role string `json:"role" default:"member"`
+	}
+	type in struct {
+		Body struct {
+			Items []item   `json:"items"`
+			Tags  []string `json:"tags" default:"a,b"`
+		}
+	}
+	got, err := bindTo[in](t, newReq("POST", "/x", `{"items":[{}]}`, nil), 1<<20)
+	if err != nil || len(got.Body.Items) != 1 || got.Body.Items[0].Role != "member" ||
+		!reflect.DeepEqual(got.Body.Tags, []string{"a", "b"}) {
+		t.Fatalf("got %+v err=%+v", got.Body, err)
+	}
+}
+
 func TestBindParamParseErrors(t *testing.T) {
 	_, err := bindTo[paramsIn](t, newReq("GET", "/x?limit=abc", "", map[string]string{"id": "x"}), 1<<20)
 	if err == nil || err.Status != 422 || len(err.Errors) != 2 {

@@ -255,13 +255,41 @@ func validFormat(format, s string) bool {
 }
 
 // applyDefaults sets zero-valued fields that declare a default, recursing
-// into nested structs. Nil pointers, including embedded ones, are left nil.
+// into nested structs, slice and array elements and map values. A slice
+// field counts as zero when it is empty. Nil pointers, including embedded
+// ones, are left nil.
 func applyDefaults(v reflect.Value) {
 	for v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return
 		}
 		v = v.Elem()
+	}
+	switch v.Kind() {
+	case reflect.Slice, reflect.Array:
+		if mayHaveDefaults(v.Type().Elem()) {
+			for i := 0; i < v.Len(); i++ {
+				applyDefaults(v.Index(i))
+			}
+		}
+		return
+	case reflect.Map:
+		if !mayHaveDefaults(v.Type().Elem()) {
+			return
+		}
+		for _, k := range v.MapKeys() {
+			e := v.MapIndex(k)
+			if e.Kind() == reflect.Pointer {
+				applyDefaults(e)
+				continue
+			}
+			// Map values are not addressable: update a copy and store it back.
+			c := reflect.New(e.Type()).Elem()
+			c.Set(e)
+			applyDefaults(c)
+			v.SetMapIndex(k, c)
+		}
+		return
 	}
 	if v.Kind() != reflect.Struct || v.Type() == timeType {
 		return
@@ -276,11 +304,27 @@ func applyDefaults(v reflect.Value) {
 		if err != nil || !fv.CanSet() {
 			continue
 		}
-		if f.Rules.HasDefault && fv.IsZero() {
-			if dv, err := parseScalar(f.Rules.Default, fv.Type()); err == nil {
+		zero := fv.IsZero() || (fv.Kind() == reflect.Slice && fv.Len() == 0)
+		if f.Rules.HasDefault && zero {
+			if dv, err := parseDefault(f.Rules.Default, fv.Type()); err == nil {
 				fv.Set(dv)
 			}
 		}
 		applyDefaults(fv)
 	}
+}
+
+// mayHaveDefaults reports whether values of type t can contain struct fields,
+// and so defaults, so scalar containers are not walked.
+func mayHaveDefaults(t reflect.Type) bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.Struct:
+		return t != timeType
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return mayHaveDefaults(t.Elem())
+	}
+	return false
 }

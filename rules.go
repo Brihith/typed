@@ -85,10 +85,8 @@ func parseRules(f reflect.StructField) (rules, error) {
 	r.Example = f.Tag.Get("example")
 	if v, ok := f.Tag.Lookup("default"); ok {
 		r.Default, r.HasDefault = v, true
-		if f.Type.Kind() != reflect.Slice {
-			if _, err := parseScalar(v, f.Type); err != nil {
-				return fail("default", err)
-			}
+		if _, err := parseDefault(v, f.Type); err != nil {
+			return fail("default", err)
 		}
 	}
 	return r, nil
@@ -182,6 +180,24 @@ func hasOpt(opts, want string) bool {
 }
 
 var textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
+
+// parseDefault converts a default tag value into a value of type t. For a
+// slice the value is a comma-separated list of elements.
+func parseDefault(s string, t reflect.Type) (reflect.Value, error) {
+	if t.Kind() != reflect.Slice || reflect.PointerTo(t).Implements(textUnmarshalerType) {
+		return parseScalar(s, t)
+	}
+	parts := strings.Split(s, ",")
+	out := reflect.MakeSlice(t, 0, len(parts))
+	for _, p := range parts {
+		ev, err := parseScalar(p, t.Elem())
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		out = reflect.Append(out, ev)
+	}
+	return out, nil
+}
 
 // parseScalar converts s into a value of type t. Types whose pointer
 // implements encoding.TextUnmarshaler are handled first, then strings, bools,

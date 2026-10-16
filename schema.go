@@ -210,11 +210,26 @@ func applyRules(s *Schema, r rules, t reflect.Type) {
 		}
 	}
 	if r.HasDefault {
-		s.Default = typedValue(r.Default, t)
+		s.Default = defaultValue(r.Default, t)
 	}
 	if r.Example != "" {
 		s.Examples = []any{typedValue(r.Example, t)}
 	}
+}
+
+// defaultValue renders a default tag value of type t for the schema: a slice
+// default becomes a JSON array of typed elements.
+func defaultValue(str string, t reflect.Type) any {
+	v, err := parseDefault(str, t)
+	if err != nil || v.Kind() != reflect.Slice || reflect.PointerTo(t).Implements(textUnmarshalerType) {
+		return typedValue(str, t)
+	}
+	parts := strings.Split(str, ",")
+	out := make([]any, len(parts))
+	for i, p := range parts {
+		out[i] = scalarValue(v.Index(i), p)
+	}
+	return out
 }
 
 // typedValue parses str as t, falling back to the raw string when t is not a
@@ -224,6 +239,12 @@ func typedValue(str string, t reflect.Type) any {
 	if err != nil {
 		return str
 	}
+	return scalarValue(v, str)
+}
+
+// scalarValue returns the Go value behind v when it is a plain scalar, and
+// fallback otherwise.
+func scalarValue(v reflect.Value, fallback string) any {
 	for v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
@@ -234,5 +255,5 @@ func typedValue(str string, t reflect.Type) any {
 		reflect.Float32, reflect.Float64:
 		return v.Interface()
 	}
-	return str
+	return fallback
 }

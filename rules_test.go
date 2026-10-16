@@ -47,10 +47,11 @@ func TestParseRulesErrors(t *testing.T) {
 		A string `minLength:"abc"`
 		B string `pattern:"("`
 		C int    `default:"nope"`
-		D []int  `default:"anything"`
+		D []int  `default:"1,anything"`
+		E []int  `default:"1,2"`
 	}
 	typ := reflect.TypeOf(S{})
-	for _, name := range []string{"A", "B", "C"} {
+	for _, name := range []string{"A", "B", "C", "D"} {
 		f, _ := typ.FieldByName(name)
 		_, err := parseRules(f)
 		if err == nil {
@@ -61,9 +62,9 @@ func TestParseRulesErrors(t *testing.T) {
 			t.Errorf("%s: error %q does not name the field", name, err)
 		}
 	}
-	f, _ := typ.FieldByName("D")
+	f, _ := typ.FieldByName("E")
 	if _, err := parseRules(f); err != nil {
-		t.Errorf("slice default should not be checked: %v", err)
+		t.Errorf("valid slice default: %v", err)
 	}
 }
 

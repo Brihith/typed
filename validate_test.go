@@ -217,6 +217,41 @@ func TestApplyDefaults(t *testing.T) {
 	}
 }
 
+func TestApplyDefaultsContainers(t *testing.T) {
+	type item struct {
+		Role string `json:"role" default:"member"`
+		N    int    `json:"n"`
+	}
+	type in struct {
+		Tags  []string         `json:"tags" default:"a,b"`
+		Nums  []int            `json:"nums" default:"1,2"`
+		Empty []int            `json:"empty" default:"3"`
+		Set   []int            `json:"set" default:"9"`
+		Items []item           `json:"items"`
+		Arr   [1]item          `json:"arr"`
+		ByKey map[string]item  `json:"byKey"`
+		ByPtr map[string]*item `json:"byPtr"`
+	}
+	v := in{
+		Empty: []int{},
+		Set:   []int{5},
+		Items: []item{{N: 1}, {Role: "admin"}},
+		ByKey: map[string]item{"k": {N: 2}},
+		ByPtr: map[string]*item{"p": {}, "nil": nil},
+	}
+	applyDefaults(reflect.ValueOf(&v))
+	if !reflect.DeepEqual(v.Tags, []string{"a", "b"}) || !reflect.DeepEqual(v.Nums, []int{1, 2}) ||
+		!reflect.DeepEqual(v.Empty, []int{3}) || !reflect.DeepEqual(v.Set, []int{5}) {
+		t.Errorf("slice defaults: %+v", v)
+	}
+	if v.Items[0].Role != "member" || v.Items[1].Role != "admin" || v.Arr[0].Role != "member" {
+		t.Errorf("element defaults: %+v %+v", v.Items, v.Arr)
+	}
+	if v.ByKey["k"].Role != "member" || v.ByKey["k"].N != 2 || v.ByPtr["p"].Role != "member" || v.ByPtr["nil"] != nil {
+		t.Errorf("map defaults: %+v %+v", v.ByKey, v.ByPtr)
+	}
+}
+
 type hooked struct{ err error }
 
 func (h hooked) Validate() error { return h.err }
