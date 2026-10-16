@@ -1,0 +1,279 @@
+package typed
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"reflect"
+	"strings"
+
+	"github.com/go-chi/chi/v5"
+)
+
+// paramField is one In field bound from the path, query string or headers.
+type paramField struct {
+	Index []int
+	Name  string
+	In    string // "path", "query" or "header"
+	Type  reflect.Type
+	Rules rules
+}
+
+// inputPlan describes how to fill a handler's In struct from a request.
+type inputPlan struct {
+	Params    []paramField
+	BodyIndex []int // nil when the input has no body
+	BodyType  reflect.Type
+}
+
+var paramLocations = []string{"path", "query", "header"}
+
+// newInputPlan inspects the In struct type t.
+func newInputPlan(t reflect.Type) (*inputPlan, error) {
+	if t.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("typed: input type %s must be a struct", t)
+	}
+	p := &inputPlan{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		var loc, name string
+		for _, l := range paramLocations {
+			v, ok := f.Tag.Lookup(l)
+			if !ok {
+				continue
+			}
+			if loc != "" {
+				return nil, fmt.Errorf("typed: field %s: tags %s and %s are mutually exclusive", f.Name, loc, l)
+			}
+			if v == "" {
+				return nil, fmt.Errorf("typed: field %s: empty %s tag", f.Name, l)
+			}
+			loc, name = l, v
+		}
+		if f.Name == "Body" {
+			if loc != "" {
+				return nil, fmt.Errorf("typed: field Body cannot carry a %s tag", loc)
+			}
+			p.BodyIndex, p.BodyType = f.Index, f.Type
+			continue
+		}
+		if loc == "" {
+			continue
+		}
+		if !supportedParamType(f.Type, loc == "query") {
+			return nil, fmt.Errorf("typed: field %s: unsupported %s parameter type %s", f.Name, loc, f.Type)
+		}
+		r, err := parseRules(f)
+		if err != nil {
+			return nil, err
+		}
+		p.Params = append(p.Params, paramField{Index: f.Index, Name: name, In: loc, Type: f.Type, Rules: r})
+	}
+	return p, nil
+}
+
+// supportedParamType reports whether t can be parsed from a single string, or
+// from several strings when slices is true.
+func supportedParamType(t reflect.Type, slices bool) bool {
+	if slices && t.Kind() == reflect.Slice {
+		return supportedParamType(t.Elem(), false)
+	}
+	if reflect.PointerTo(t).Implements(textUnmarshalerType) {
+		return true
+	}
+	switch t.Kind() {
+	case reflect.Pointer:
+		return supportedParamType(t.Elem(), false)
+	case reflect.String, reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	}
+	return false
+}
+
+// PathParams returns the names of the path parameters.
+func (p *inputPlan) PathParams() []string {
+	var names []string
+	for _, pf := range p.Params {
+		if pf.In == "path" {
+			names = append(names, pf.Name)
+		}
+	}
+	return names
+}
+
+// bind fills dst, the addressable In struct, from r.
+func (p *inputPlan) bind(r *http.Request, dst reflect.Value, maxBody int64) *Error {
+	var parseErrs, valErrs []ErrorDetail
+	present := make([]bool, len(p.Params))
+	var query map[string][]string
+
+	for i, pf := range p.Params {
+		loc := pf.In + "." + pf.Name
+		var raws []string
+		switch pf.In {
+		case "path":
+			raws = []string{chi.URLParam(r, pf.Name)}
+		case "query":
+			if query == nil {
+				query = r.URL.Query()
+			}
+			raws = query[pf.Name]
+		case "header":
+			raws = r.Header.Values(pf.Name)
+		}
+		fv := dst.FieldByIndex(pf.Index)
+		switch {
+		case len(raws) > 0:
+			present[i] = true
+		case pf.Rules.HasDefault:
+			present[i] = true
+			if pf.Type.Kind() == reflect.Slice {
+				raws = strings.Split(pf.Rules.Default, ",")
+			} else {
+				raws = []string{pf.Rules.Default}
+			}
+		default:
+			continue
+		}
+		if err := setParam(fv, raws, loc, &parseErrs); err != nil {
+			present[i] = false
+		}
+	}
+	if len(parseErrs) > 0 {
+		return validationError(parseErrs)
+	}
+
+	if p.BodyIndex != nil {
+		if err := p.readBody(r, dst.FieldByIndex(p.BodyIndex), maxBody); err != nil {
+			return err
+		}
+		applyDefaults(dst.FieldByIndex(p.BodyIndex))
+	}
+
+	for i, pf := range p.Params {
+		validatePresent(dst.FieldByIndex(pf.Index), pf.Rules, pf.In+"."+pf.Name, &valErrs, present[i])
+	}
+	if p.BodyIndex != nil {
+		validatePresent(dst.FieldByIndex(p.BodyIndex), rules{}, "body", &valErrs, true)
+	}
+	if len(valErrs) > 0 {
+		return validationError(valErrs)
+	}
+	return nil
+}
+
+func validationError(details []ErrorDetail) *Error {
+	e := UnprocessableEntity("validation failed")
+	e.Errors = details
+	return e
+}
+
+// setParam parses raws into fv, appending a detail to errs for each value
+// that does not parse. Scalars use the first value.
+func setParam(fv reflect.Value, raws []string, loc string, errs *[]ErrorDetail) error {
+	bad := func(raw string) error {
+		*errs = append(*errs, ErrorDetail{Location: loc, Message: "invalid value", Value: raw})
+		return errors.New("invalid value")
+	}
+	if fv.Kind() == reflect.Slice && !reflect.PointerTo(fv.Type()).Implements(textUnmarshalerType) {
+		s := reflect.MakeSlice(fv.Type(), 0, len(raws))
+		var failed error
+		for _, raw := range raws {
+			ev, err := parseScalar(raw, fv.Type().Elem())
+			if err != nil {
+				failed = bad(raw)
+				continue
+			}
+			s = reflect.Append(s, ev)
+		}
+		if failed == nil {
+			fv.Set(s)
+		}
+		return failed
+	}
+	v, err := parseScalar(raws[0], fv.Type())
+	if err != nil {
+		return bad(raws[0])
+	}
+	fv.Set(v)
+	return nil
+}
+
+// readBody decodes the JSON request body into fv. An empty body leaves fv
+// untouched.
+func (p *inputPlan) readBody(r *http.Request, fv reflect.Value, maxBody int64) *Error {
+	var data []byte
+	if r.Body != nil {
+		var err error
+		data, err = io.ReadAll(http.MaxBytesReader(nil, r.Body, maxBody))
+		if err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				return NewError(http.StatusRequestEntityTooLarge, "request body too large")
+			}
+			return BadRequest("could not read request body: " + err.Error())
+		}
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
+	if ct := r.Header.Get("Content-Type"); ct != "" {
+		mt, _, err := mime.ParseMediaType(ct)
+		if err != nil || !(mt == "application/json" || (strings.HasPrefix(mt, "application/") && strings.HasSuffix(mt, "+json"))) {
+			return BadRequest("content type must be application/json")
+		}
+	}
+	if err := json.Unmarshal(data, fv.Addr().Interface()); err != nil {
+		return BadRequest("invalid JSON: " + err.Error())
+	}
+	return nil
+}
+
+// parameters returns the OpenAPI parameters of the input.
+func (p *inputPlan) parameters(g *registry) ([]*Parameter, error) {
+	var out []*Parameter
+	for _, pf := range p.Params {
+		t := pf.Type
+		for t.Kind() == reflect.Pointer {
+			t = t.Elem()
+		}
+		s, err := g.schemaFor(t)
+		if err != nil {
+			return nil, fmt.Errorf("typed: parameter %s: %w", pf.Name, err)
+		}
+		applyRules(s, pf.Rules, t)
+		out = append(out, &Parameter{
+			Name:        pf.Name,
+			In:          pf.In,
+			Description: pf.Rules.Doc,
+			Required:    pf.In == "path" || pf.Rules.Required,
+			Schema:      s,
+		})
+	}
+	return out, nil
+}
+
+// requestBody returns the OpenAPI request body, or nil when the input has none.
+func (p *inputPlan) requestBody(g *registry) (*RequestBody, error) {
+	if p.BodyIndex == nil {
+		return nil, nil
+	}
+	s, err := g.schemaFor(p.BodyType)
+	if err != nil {
+		return nil, fmt.Errorf("typed: request body: %w", err)
+	}
+	return &RequestBody{
+		Required: true,
+		Content:  map[string]*MediaType{"application/json": {Schema: s}},
+	}, nil
+}
