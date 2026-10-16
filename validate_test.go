@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func validate(v any) []ErrorDetail {
@@ -235,5 +236,84 @@ func TestRunValidateHook(t *testing.T) {
 	}
 	if err := runValidateHook(hooked{}); err != nil {
 		t.Errorf("nil error: got %v", err)
+	}
+}
+
+func TestValidateZeroSliceElements(t *testing.T) {
+	type s struct {
+		Tags []string `json:"tags" enum:"a,b"`
+	}
+	got := validate(s{Tags: []string{"a", ""}})
+	want := []ErrorDetail{{"body.tags[1]", "must be one of: a, b", ""}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v want %#v", got, want)
+	}
+	type n struct {
+		N []int `json:"n" minimum:"1"`
+	}
+	got = validate(n{N: []int{0}})
+	want = []ErrorDetail{{"body.n[0]", "must be >= 1", 0}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v want %#v", got, want)
+	}
+}
+
+func TestValidateRequiredSkipsOtherChecks(t *testing.T) {
+	type in struct {
+		S string `json:"s" required:"true" minLength:"3"`
+	}
+	got := validate(in{})
+	want := []ErrorDetail{{Location: "body.s", Message: "is required"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v", got)
+	}
+}
+
+func TestValidateInterfaceField(t *testing.T) {
+	type in struct {
+		V any `json:"v"`
+	}
+	type req struct {
+		V any `json:"v" required:"true"`
+	}
+	if got := validate(in{}); got != nil {
+		t.Errorf("got %#v", got)
+	}
+	want := []ErrorDetail{{Location: "body.v", Message: "is required"}}
+	if got := validate(req{}); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v", got)
+	}
+}
+
+type hiddenBase struct {
+	ID string `json:"id" required:"true"`
+}
+
+func TestValidateUnexportedEmbedded(t *testing.T) {
+	type in struct {
+		hiddenBase
+	}
+	got := validate(in{})
+	want := []ErrorDetail{{Location: "body.id", Message: "is required"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v", got)
+	}
+}
+
+func TestValidateTimeLeaf(t *testing.T) {
+	type in struct {
+		At time.Time `json:"at" format:"date-time"`
+	}
+	type req struct {
+		At time.Time `json:"at" required:"true"`
+	}
+	if got := validate(in{}); got != nil {
+		t.Errorf("zero: %#v", got)
+	}
+	if got := validate(in{At: time.Now()}); got != nil {
+		t.Errorf("set: %#v", got)
+	}
+	if got := validate(req{}); len(got) != 1 || got[0].Message != "is required" {
+		t.Errorf("required: %#v", got)
 	}
 }

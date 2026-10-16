@@ -57,6 +57,7 @@ func validateStruct(v reflect.Value, loc string, errs *[]ErrorDetail) {
 	}
 	fields, err := structFields(v.Type())
 	if err != nil {
+		// Registration already validated the type, so this can't happen at request time.
 		return
 	}
 	for _, f := range fields {
@@ -70,10 +71,16 @@ func validateStruct(v reflect.Value, loc string, errs *[]ErrorDetail) {
 
 // validateValue checks v against r, then recurses into its contents.
 func validateValue(v reflect.Value, r rules, loc string, errs *[]ErrorDetail) {
+	validatePresent(v, r, loc, errs, false)
+}
+
+// validatePresent is validateValue for a value known to be present, as a
+// slice element or map value is, so zero values are not skipped as absent.
+func validatePresent(v reflect.Value, r rules, loc string, errs *[]ErrorDetail, present bool) {
 	add := func(msg string, val any) {
 		*errs = append(*errs, ErrorDetail{Location: loc, Message: msg, Value: val})
 	}
-	explicit := false // behind a non-nil pointer: a zero value was still sent
+	explicit := present // present, or behind a non-nil pointer: a zero value was still sent
 	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			if r.Required {
@@ -119,13 +126,13 @@ func validateValue(v reflect.Value, r rules, loc string, errs *[]ErrorDetail) {
 		}
 		er := elementRules(r)
 		for i := 0; i < n; i++ {
-			validateValue(v.Index(i), er, loc+"["+strconv.Itoa(i)+"]", errs)
+			validatePresent(v.Index(i), er, loc+"["+strconv.Itoa(i)+"]", errs, true)
 		}
 	case v.Kind() == reflect.Map:
 		keys := v.MapKeys()
 		sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
 		for _, k := range keys {
-			validateValue(v.MapIndex(k), rules{}, loc+"."+k.String(), errs)
+			validatePresent(v.MapIndex(k), rules{}, loc+"."+k.String(), errs, true)
 		}
 	}
 }
@@ -257,6 +264,7 @@ func applyDefaults(v reflect.Value) {
 	}
 	fields, err := structFields(v.Type())
 	if err != nil {
+		// Registration already validated the type, so this can't happen at request time.
 		return
 	}
 	for _, f := range fields {
