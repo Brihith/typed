@@ -173,6 +173,10 @@ validates and appears in the generated schema.
 Note on `required`: because Go cannot distinguish "missing" from "zero" for
 value types, `required` means non-zero. Fields where zero is a valid value
 should use a pointer (`*int` with `required:"true"` means "must be present").
+For non-pointer fields the zero value (0, "", false, empty slice) counts as
+"not sent" and skips all rules, so use a pointer to enforce rules on zero
+values. A non-pointer nested struct is always validated; use `*Nested` for an
+optional object.
 
 Custom validation: if `*In` implements `interface{ Validate() error }`, it is
 called after the built-in checks pass. Returning a `*typed.Error` (for example
@@ -278,7 +282,7 @@ version, pointed at `SpecPath`.
 
 ```
 typed/                     module root = package typed
-├── go.mod                 module github.com/Brihith/typed, go 1.22
+├── go.mod                 module github.com/Brihith/typed, go 1.24
 ├── api.go                 Config, New, API, Route, With
 ├── register.go            Get/Post/Put/Patch/Delete, route options
 ├── binding.go             fill In from path/query/header/body

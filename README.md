@@ -10,6 +10,8 @@ go get github.com/Brihith/typed
 
 ## Quick start
 
+Imports omitted; see [examples/users](examples/users) for the full program.
+
 ```go
 type GetUserInput struct {
 	ID      int  `path:"id" minimum:"1"`
@@ -46,6 +48,11 @@ func getUser(ctx context.Context, in *GetUserInput) (*User, error) {
 	}
 	return &User{ID: 1, Name: "Ada", Email: "ada@example.com"}, nil
 }
+
+func createUser(ctx context.Context, in *CreateUserInput) (*User, error) {
+	// in.Body is decoded and validated; Role defaults to "member".
+	return &User{ID: 2, Name: in.Body.Name, Email: in.Body.Email}, nil
+}
 ```
 
 A complete runnable version is in [examples/users](examples/users). Run it and open http://localhost:8080/docs.
@@ -65,6 +72,8 @@ Each exported field of `In` is read from one source.
 
 Parameter types: `string`, `bool`, integers, floats, slices of those (query only), and anything implementing `encoding.TextUnmarshaler`. A pointer parameter is `nil` when absent.
 
+Untagged embedded structs (not pointers) are flattened, so shared parameters such as pagination can live in their own struct. Any other exported field without one of these tags is a registration error.
+
 ## Validation tags
 
 Tags apply to body fields and parameters. Each one validates the request and appears in the generated schema.
@@ -78,11 +87,11 @@ Tags apply to body fields and parameters. Each one validates the request and app
 | `enum:"a,b,c"`            | string, numbers     | allowed values                                       |
 | `minimum` / `maximum`     | numbers             | inclusive bounds                                     |
 | `minItems` / `maxItems`   | slices              | length bounds                                        |
-| `default`                 | params, body fields | applied when absent or zero; shown in docs           |
+| `default`                 | params, body fields | applied when absent or zero (slices: comma-separated list); shown in docs |
 | `doc`                     | any                 | description in docs                                  |
 | `example`                 | any                 | example in docs                                      |
 
-Because Go cannot tell "missing" from "zero", `required` means non-zero. Use a pointer (`*int`) when zero is a valid value. For custom checks, implement `Validate() error` on the input type; return `typed.FieldError(location, message)` to control the response.
+Because Go cannot tell "missing" from "zero", `required` means non-zero. For non-pointer fields the zero value (`0`, `""`, `false`, an empty slice) counts as "not sent" and skips all rules. Use a pointer (`*int`, `*string`) to enforce rules on zero values or to require presence. A non-pointer nested struct is always validated; use `*Nested` for an optional object. For custom checks, implement `Validate() error` on the input type; return `typed.FieldError(location, message)` to control the response.
 
 ## Errors
 
