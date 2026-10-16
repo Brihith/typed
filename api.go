@@ -3,6 +3,7 @@ package typed
 import (
 	"net/http"
 	"reflect"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
@@ -102,7 +103,7 @@ func (a *API) OpenAPI() *OpenAPI {
 // registered on sub appear in the document under pattern.
 func (a *API) Route(pattern string, fn func(sub *API)) {
 	a.router.Route(pattern, func(r chi.Router) {
-		fn(&API{router: r, prefix: a.prefix + pattern, s: a.s})
+		fn(&API{router: r, prefix: strings.TrimSuffix(a.prefix+pattern, "/"), s: a.s})
 	})
 }
 

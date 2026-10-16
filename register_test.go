@@ -305,3 +305,58 @@ func TestPlainChiRoutesStillWork(t *testing.T) {
 		t.Fatal("/raw must not be in the spec")
 	}
 }
+
+type orgIn struct {
+	Org string `path:"org"`
+	ID  string `path:"id"`
+}
+type orgOut struct {
+	Org string `json:"org"`
+	ID  string `json:"id"`
+}
+
+func orgHandler(_ context.Context, in *orgIn) (*orgOut, error) {
+	return &orgOut{Org: in.Org, ID: in.ID}, nil
+}
+
+func TestRoutePrefixPaths(t *testing.T) {
+	api, r := newTestAPI(t, Config{})
+	api.Route("/", func(sub *API) { Get(sub, "/a", okHandler) })
+	api.Route("/b/", func(sub *API) { Get(sub, "/c", okHandler) })
+	api.Route("/orgs/{org}", func(sub *API) { Get(sub, "/users/{id}", orgHandler) })
+	api.Route("/t/{tenant:[a-z]+}", func(sub *API) {
+		Get(sub, "/x", func(_ context.Context, in *tenantIn) (*okOut, error) { return &okOut{}, nil })
+	})
+	for _, p := range []string{"/a", "/b/c", "/t/abc/x"} {
+		if w := do(r, "GET", p, ""); w.Code != 200 {
+			t.Fatalf("%s code = %d", p, w.Code)
+		}
+	}
+	w := do(r, "GET", "/orgs/o1/users/u2", "")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"org":"o1"`) || !strings.Contains(w.Body.String(), `"id":"u2"`) {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body)
+	}
+	paths := api.OpenAPI().Paths
+	for _, k := range []string{"/a", "/b/c", "/orgs/{org}/users/{id}", "/t/{tenant}/x"} {
+		if paths[k] == nil {
+			t.Fatalf("missing %q in %v", k, paths)
+		}
+	}
+	if n := len(paths["/orgs/{org}/users/{id}"].Get.Parameters); n != 2 {
+		t.Fatalf("params = %d", n)
+	}
+}
+
+type tenantIn struct {
+	Tenant string `path:"tenant"`
+}
+
+func okHandler(context.Context, *emptyIn) (*okOut, error) { return &okOut{}, nil }
+
+func TestDuplicateRegexVsPlain(t *testing.T) {
+	mustPanic(t, func() {
+		api, _ := newTestAPI(t, Config{})
+		Get(api, "/z/{id}", echoHandler)
+		Get(api, "/z/{id:[0-9]+}", echoHandler)
+	}, "duplicate")
+}

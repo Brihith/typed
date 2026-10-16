@@ -70,8 +70,9 @@ func Delete[In, Out any](api *API, path string, h Handler[In, Out], opts ...Rout
 }
 
 func register[In, Out any](api *API, method, path string, h Handler[In, Out], opts []RouteOption) {
+	full := api.prefix + path
 	fail := func(format string, args ...any) {
-		panic(fmt.Sprintf("typed: %s %s: %s", method, path, fmt.Sprintf(format, args...)))
+		panic(fmt.Sprintf("typed: %s %s: %s", method, full, fmt.Sprintf(format, args...)))
 	}
 
 	inType, outType := reflect.TypeFor[In](), reflect.TypeFor[Out]()
@@ -82,7 +83,7 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 	if err != nil {
 		fail("%v", err)
 	}
-	patternParams, specSuffix, err := parsePattern(path)
+	patternParams, specSuffix, err := parsePattern(full)
 	if err != nil {
 		fail("%v", err)
 	}
@@ -103,8 +104,8 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 	}
 
 	s := api.s
-	specPath := api.prefix + specSuffix
-	key := method + " " + api.prefix + path
+	specPath := specSuffix
+	key := method + " " + specPath
 
 	s.mu.Lock()
 	if s.ops[key] {
