@@ -2,6 +2,7 @@ package typed
 
 import (
 	"encoding"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -12,6 +13,7 @@ import (
 var (
 	timeType          = reflect.TypeOf(time.Time{})
 	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+	rawMessageType    = reflect.TypeFor[json.RawMessage]()
 )
 
 // registry turns Go types into schemas, collecting named structs as
@@ -69,6 +71,10 @@ func (g *registry) nameFor(t reflect.Type) (string, error) {
 
 // schemaFor returns the schema describing t.
 func (g *registry) schemaFor(t reflect.Type) (*Schema, error) {
+	if t == rawMessageType {
+		// Arbitrary JSON, written verbatim.
+		return &Schema{}, nil
+	}
 	if t == timeType {
 		return &Schema{Type: "string", Format: "date-time"}, nil
 	}

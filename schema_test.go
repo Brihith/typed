@@ -47,6 +47,8 @@ func TestSchemaScalars(t *testing.T) {
 		{reflect.TypeOf((*string)(nil)), `{"type":["string","null"]}`},
 		{reflect.TypeOf((*time.Time)(nil)), `{"type":["string","null"],"format":"date-time"}`},
 		{reflect.TypeOf((*any)(nil)).Elem(), `{}`},
+		{reflect.TypeOf(json.RawMessage(nil)), `{}`},
+		{reflect.TypeOf([]json.RawMessage(nil)), `{"type":"array","items":{}}`},
 	}
 	for _, tc := range tests {
 		s, err := newRegistry().schemaFor(tc.typ)
