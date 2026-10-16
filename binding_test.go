@@ -192,18 +192,68 @@ func TestNewInputPlanErrors(t *testing.T) {
 		A string `header:"x-id"`
 		B string `header:"X-Id"`
 	}
+	type embeddedPtr struct {
+		*PageParams
+	}
+	type untagged struct {
+		Extra string
+	}
+	type deepUntagged struct {
+		PageParams
+		inner
+	}
 	for name, typ := range map[string]reflect.Type{
-		"bytes query": reflect.TypeOf(bytesQuery{}),
-		"dup query":   reflect.TypeOf(dupQuery{}),
-		"dup header":  reflect.TypeOf(dupHeader{}),
-		"non-struct":  reflect.TypeOf(1),
-		"both":        reflect.TypeOf(both{}),
-		"hdr slice":   reflect.TypeOf(hdrSlice{}),
-		"map query":   reflect.TypeOf(mapQuery{}),
+		"embedded ptr":  reflect.TypeOf(embeddedPtr{}),
+		"untagged":      reflect.TypeOf(untagged{}),
+		"deep untagged": reflect.TypeOf(deepUntagged{}),
+		"bytes query":   reflect.TypeOf(bytesQuery{}),
+		"dup query":     reflect.TypeOf(dupQuery{}),
+		"dup header":    reflect.TypeOf(dupHeader{}),
+		"non-struct":    reflect.TypeOf(1),
+		"both":          reflect.TypeOf(both{}),
+		"hdr slice":     reflect.TypeOf(hdrSlice{}),
+		"map query":     reflect.TypeOf(mapQuery{}),
 	} {
 		if _, err := newInputPlan(typ); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+// PageParams is embedded in input structs to share pagination parameters.
+type PageParams struct {
+	Limit int `query:"limit" minimum:"1" default:"10"`
+}
+
+type inner struct {
+	Missing string
+}
+
+type embeddedIn struct {
+	PageParams
+	Q      string `query:"q"`
+	hidden int
+}
+
+func TestBindEmbeddedParams(t *testing.T) {
+	in, err := bindTo[embeddedIn](t, newReq("GET", "/x?q=z", "", nil), 1<<20)
+	if err != nil || in.Limit != 10 || in.Q != "z" {
+		t.Fatalf("default: in=%+v err=%+v", in, err)
+	}
+	in, err = bindTo[embeddedIn](t, newReq("GET", "/x?limit=5", "", nil), 1<<20)
+	if err != nil || in.Limit != 5 {
+		t.Fatalf("bound: in=%+v err=%+v", in, err)
+	}
+	_, err = bindTo[embeddedIn](t, newReq("GET", "/x?limit=0", "", nil), 1<<20)
+	if err == nil || err.Status != 422 || len(err.Errors) != 1 || err.Errors[0].Location != "query.limit" {
+		t.Fatalf("validation: %+v", err)
+	}
+	ps, perr := mustPlan(t, reflect.TypeOf(embeddedIn{})).parameters(newRegistry())
+	if perr != nil || len(ps) != 2 || ps[0].Name != "limit" || ps[0].In != "query" {
+		t.Fatalf("params = %+v err=%v", ps, perr)
+	}
+	if s := ps[0].Schema; s.Default != 10 || s.Minimum == nil || *s.Minimum != 1 {
+		t.Fatalf("limit schema = %+v", s)
 	}
 }
 

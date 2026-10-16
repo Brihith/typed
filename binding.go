@@ -32,60 +32,92 @@ type inputPlan struct {
 
 var paramLocations = []string{"path", "query", "header"}
 
-// newInputPlan inspects the In struct type t.
+// newInputPlan inspects the In struct type t. Untagged embedded structs are
+// flattened so their tagged fields become parameters.
 func newInputPlan(t reflect.Type) (*inputPlan, error) {
 	if t.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("typed: input type %s must be a struct", t)
 	}
 	p := &inputPlan{}
-	seen := map[string]bool{}
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if !f.IsExported() {
-			continue
-		}
-		var loc, name string
-		for _, l := range paramLocations {
-			v, ok := f.Tag.Lookup(l)
-			if !ok {
-				continue
-			}
-			if loc != "" {
-				return nil, fmt.Errorf("typed: field %s: tags %s and %s are mutually exclusive", f.Name, loc, l)
-			}
-			if v == "" {
-				return nil, fmt.Errorf("typed: field %s: empty %s tag", f.Name, l)
-			}
-			loc, name = l, v
-		}
-		if f.Name == "Body" {
-			if loc != "" {
-				return nil, fmt.Errorf("typed: field Body cannot carry a %s tag", loc)
-			}
-			p.BodyIndex, p.BodyType = f.Index, f.Type
-			continue
-		}
-		if loc == "" {
-			continue
-		}
-		if !supportedParamType(f.Type, loc == "query") {
-			return nil, fmt.Errorf("typed: field %s: unsupported %s parameter type %s", f.Name, loc, f.Type)
-		}
-		if loc == "header" {
-			name = http.CanonicalHeaderKey(name)
-		}
-		if key := loc + "." + name; seen[key] {
-			return nil, fmt.Errorf("typed: field %s: duplicate %s parameter %q", f.Name, loc, name)
-		} else {
-			seen[key] = true
-		}
-		r, err := parseRules(f)
-		if err != nil {
-			return nil, err
-		}
-		p.Params = append(p.Params, paramField{Index: f.Index, Name: name, In: loc, Type: f.Type, Rules: r})
+	if err := p.addFields(t, nil, map[string]bool{}); err != nil {
+		return nil, err
 	}
 	return p, nil
+}
+
+// addFields adds the fields of struct type t, found at index prefix within
+// the In struct, to p. Body is recognized only at the top level.
+func (p *inputPlan) addFields(t reflect.Type, prefix []int, seen map[string]bool) error {
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		f.Index = append(append([]int(nil), prefix...), i)
+		if err := p.addField(f, prefix == nil, seen); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *inputPlan) addField(f reflect.StructField, top bool, seen map[string]bool) error {
+	hasTag := false
+	for _, l := range paramLocations {
+		if _, ok := f.Tag.Lookup(l); ok {
+			hasTag = true
+		}
+	}
+	isBody := top && f.Name == "Body"
+	if f.Anonymous && !hasTag && !isBody {
+		switch {
+		case f.Type.Kind() == reflect.Pointer && f.Type.Elem().Kind() == reflect.Struct:
+			return fmt.Errorf("typed: field %s: embedded pointer structs are not supported", f.Name)
+		case f.Type.Kind() == reflect.Struct:
+			return p.addFields(f.Type, f.Index, seen)
+		}
+	}
+	if !f.IsExported() {
+		return nil
+	}
+	var loc, name string
+	for _, l := range paramLocations {
+		v, ok := f.Tag.Lookup(l)
+		if !ok {
+			continue
+		}
+		if loc != "" {
+			return fmt.Errorf("typed: field %s: tags %s and %s are mutually exclusive", f.Name, loc, l)
+		}
+		if v == "" {
+			return fmt.Errorf("typed: field %s: empty %s tag", f.Name, l)
+		}
+		loc, name = l, v
+	}
+	if isBody {
+		if loc != "" {
+			return fmt.Errorf("typed: field Body cannot carry a %s tag", loc)
+		}
+		p.BodyIndex, p.BodyType = f.Index, f.Type
+		return nil
+	}
+	if loc == "" {
+		return fmt.Errorf("typed: field %s has no path, query or header tag", f.Name)
+	}
+	if !supportedParamType(f.Type, loc == "query") {
+		return fmt.Errorf("typed: field %s: unsupported %s parameter type %s", f.Name, loc, f.Type)
+	}
+	if loc == "header" {
+		name = http.CanonicalHeaderKey(name)
+	}
+	if key := loc + "." + name; seen[key] {
+		return fmt.Errorf("typed: field %s: duplicate %s parameter %q", f.Name, loc, name)
+	} else {
+		seen[key] = true
+	}
+	r, err := parseRules(f)
+	if err != nil {
+		return err
+	}
+	p.Params = append(p.Params, paramField{Index: f.Index, Name: name, In: loc, Type: f.Type, Rules: r})
+	return nil
 }
 
 // supportedParamType reports whether t can be parsed from a single string, or
