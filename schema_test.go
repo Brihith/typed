@@ -188,3 +188,18 @@ func TestSchemaRefPropertyDocOnly(t *testing.T) {
 		t.Errorf("got %s, want %s", got, want)
 	}
 }
+
+func TestSchemaSliceElementRules(t *testing.T) {
+	type q struct {
+		Tags []string `enum:"a,b" minItems:"1" doc:"tags"`
+	}
+	g := newRegistry()
+	if _, err := g.schemaFor(reflect.TypeOf(q{})); err != nil {
+		t.Fatal(err)
+	}
+	got := mustJSON(t, g.components()["q"].Properties["Tags"])
+	want := `{"type":"array","description":"tags","items":{"type":"string","enum":["a","b"]},"minItems":1}`
+	if got != want {
+		t.Errorf("got %s\nwant %s", got, want)
+	}
+}

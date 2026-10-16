@@ -179,17 +179,26 @@ func applyRules(s *Schema, r rules, t reflect.Type) {
 	if s.Ref != "" || len(s.AnyOf) > 0 {
 		return
 	}
-	s.MinLength, s.MaxLength = r.MinLength, r.MaxLength
 	s.MinItems, s.MaxItems = r.MinItems, r.MaxItems
-	s.Minimum, s.Maximum = r.Minimum, r.Maximum
-	if r.Pattern != nil {
-		s.Pattern = r.Pattern.String()
-	}
-	if r.Format != "" {
-		s.Format = r.Format
-	}
-	for _, e := range r.Enum {
-		s.Enum = append(s.Enum, typedValue(e, t))
+	if s.Items != nil {
+		// Element-level constraints describe the items of an array.
+		et := t
+		for et.Kind() == reflect.Pointer {
+			et = et.Elem()
+		}
+		applyRules(s.Items, elementRules(r), et.Elem())
+	} else {
+		s.MinLength, s.MaxLength = r.MinLength, r.MaxLength
+		s.Minimum, s.Maximum = r.Minimum, r.Maximum
+		if r.Pattern != nil {
+			s.Pattern = r.Pattern.String()
+		}
+		if r.Format != "" {
+			s.Format = r.Format
+		}
+		for _, e := range r.Enum {
+			s.Enum = append(s.Enum, typedValue(e, t))
+		}
 	}
 	if r.HasDefault {
 		s.Default = typedValue(r.Default, t)
