@@ -135,3 +135,7 @@ Routes registered under `Route` appear in the spec with the prefix. Plain chi ro
 ## Status
 
 Beta. The API may change before v1.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
