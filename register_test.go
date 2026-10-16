@@ -256,7 +256,7 @@ func TestStartupPanics(t *testing.T) {
 	mustPanic(t, func() {
 		api, _ := newTestAPI(t, Config{})
 		Get(api, "/users/{id}", func(context.Context, *getIn) (*int, error) { return nil, nil })
-	}, "must be a struct")
+	}, "must be a struct or a slice")
 	mustPanic(t, func() {
 		api, _ := newTestAPI(t, Config{})
 		Get(api, "/users/{id}", ok)
@@ -268,6 +268,29 @@ func TestStartupPanics(t *testing.T) {
 	}, "wildcard")
 	mustPanic(t, func() { New(chi.NewRouter(), Config{Version: "1"}) }, "Title")
 	mustPanic(t, func() { New(chi.NewRouter(), Config{Title: "t"}) }, "Version")
+}
+
+func TestSliceOutput(t *testing.T) {
+	api, r := newTestAPI(t, Config{})
+	Get(api, "/ids", func(context.Context, *emptyIn) (*[]getOut, error) {
+		return &[]getOut{{ID: 1}, {ID: 2}}, nil
+	})
+	Get(api, "/none", func(context.Context, *emptyIn) (*[]getOut, error) {
+		return new([]getOut), nil
+	})
+
+	w := do(r, http.MethodGet, "/ids", "")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != `[{"id":1,"verbose":false},{"id":2,"verbose":false}]` {
+		t.Fatalf("got %d %s", w.Code, w.Body)
+	}
+	if w := do(r, http.MethodGet, "/none", ""); strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Fatalf("nil slice = %s, want []", w.Body)
+	}
+
+	sch := api.OpenAPI().Paths["/ids"].Get.Responses["200"].Content["application/json"].Schema
+	if sch.Type != "array" || sch.Items == nil || sch.Items.Ref != "#/components/schemas/getOut" {
+		t.Fatalf("schema = %+v", sch)
+	}
 }
 
 func TestOperationSpec(t *testing.T) {

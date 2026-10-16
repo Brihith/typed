@@ -11,7 +11,8 @@ import (
 	"strings"
 )
 
-// Handler is a typed request handler.
+// Handler is a typed request handler. Out is a struct, or a slice for a
+// response that is a JSON array.
 type Handler[In, Out any] func(ctx context.Context, in *In) (*Out, error)
 
 type routeConfig struct {
@@ -76,8 +77,8 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 	}
 
 	inType, outType := reflect.TypeFor[In](), reflect.TypeFor[Out]()
-	if outType.Kind() != reflect.Struct {
-		fail("output type %s must be a struct", outType)
+	if k := outType.Kind(); k != reflect.Struct && k != reflect.Slice {
+		fail("output type %s must be a struct or a slice", outType)
 	}
 	plan, err := newInputPlan(inType)
 	if err != nil {
@@ -150,6 +151,7 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 
 	maxBody := s.cfg.MaxBodyBytes
 	status := cfg.status
+	isSlice := outType.Kind() == reflect.Slice
 	api.router.MethodFunc(method, path, func(w http.ResponseWriter, r *http.Request) {
 		in := new(In)
 		if perr := plan.bind(r, reflect.ValueOf(in).Elem(), maxBody); perr != nil {
@@ -177,6 +179,10 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 		if err != nil {
 			api.handleError(w, r, err)
 			return
+		}
+		if isSlice && string(data) == "null" {
+			// A nil slice is an empty list, not null.
+			data = []byte("[]")
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)

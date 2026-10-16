@@ -57,7 +57,7 @@ func createUser(ctx context.Context, in *CreateUserInput) (*User, error) {
 
 A complete runnable version is in [examples/users](examples/users). Run it and open http://localhost:8080/docs.
 
-Handlers have the form `func(ctx context.Context, in *In) (*Out, error)`. Use `struct{}` as `Out` for an empty 204 response.
+Handlers have the form `func(ctx context.Context, in *In) (*Out, error)`. `Out` is a struct, or a slice for a JSON array response (a nil slice is written as `[]`). Use `struct{}` as `Out` for an empty 204 response.
 
 ## Input tags
 
