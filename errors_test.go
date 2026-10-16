@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -77,5 +78,46 @@ func TestWriteErrorUnknown(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "db down") {
 		t.Fatalf("leaked internal error: %s", rec.Body)
+	}
+}
+
+func TestWriteErrorTypedNil(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	var pe *Error
+	writeError(rec, req, pe)
+	if rec.Code != 500 || rec.Header().Get("Content-Type") != "application/problem+json" {
+		t.Fatalf("code=%d ct=%q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), `"detail":"internal server error"`) {
+		t.Fatalf("body = %s", rec.Body)
+	}
+}
+
+func TestWriteErrorNormalizes(t *testing.T) {
+	for _, tc := range []struct {
+		in         *Error
+		code       int
+		title, typ string
+	}{
+		{&Error{Detail: "x"}, 500, "Internal Server Error", "about:blank"},
+		{&Error{Status: 42}, 500, "Internal Server Error", "about:blank"},
+		{&Error{Status: 600}, 500, "Internal Server Error", "about:blank"},
+		{&Error{Status: 418}, 418, "I'm a teapot", "about:blank"},
+		{&Error{Status: 409, Title: "Taken", Type: "https://e/x"}, 409, "Taken", "https://e/x"},
+	} {
+		orig := *tc.in
+		rec := httptest.NewRecorder()
+		writeError(rec, httptest.NewRequest(http.MethodGet, "/", nil), tc.in)
+		var m map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != tc.code || m["status"] != float64(tc.code) || m["title"] != tc.title || m["type"] != tc.typ {
+			t.Errorf("%+v: code=%d body=%s", orig, rec.Code, rec.Body)
+		}
+		if !reflect.DeepEqual(*tc.in, orig) {
+			t.Errorf("caller's error mutated: %+v -> %+v", orig, *tc.in)
+		}
 	}
 }

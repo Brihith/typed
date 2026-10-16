@@ -19,7 +19,8 @@ var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]
 type validator interface{ Validate() error }
 
 // runValidateHook calls in.Validate when in implements validator. A *Error is
-// returned as-is; any other error becomes a 422 problem.
+// returned as-is (a nil *Error means no error); any other error becomes a 422
+// problem.
 func runValidateHook(in any) error {
 	v, ok := in.(validator)
 	if !ok && in != nil && reflect.TypeOf(in).Kind() != reflect.Pointer {
@@ -37,6 +38,9 @@ func runValidateHook(in any) error {
 	}
 	var pe *Error
 	if errors.As(err, &pe) {
+		if pe == nil {
+			return nil
+		}
 		return pe
 	}
 	return UnprocessableEntity(err.Error())

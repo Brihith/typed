@@ -237,6 +237,10 @@ func TestRunValidateHook(t *testing.T) {
 	if err := runValidateHook(hooked{}); err != nil {
 		t.Errorf("nil error: got %v", err)
 	}
+	var typedNil *Error
+	if err := runValidateHook(hooked{typedNil}); err != nil {
+		t.Errorf("typed nil *Error: got %#v", err)
+	}
 }
 
 func TestValidateZeroSliceElements(t *testing.T) {

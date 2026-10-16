@@ -71,16 +71,27 @@ func FieldError(location, message string) *Error {
 	return e
 }
 
-// writeError is the default error writer. A *Error is written as-is; any
-// other error is logged and reported as a generic 500.
+// writeError is the default error writer. A *Error is written with missing
+// fields filled in (an invalid status becomes 500); any other error, including
+// a nil *Error, is logged and reported as a generic 500.
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	var pe *Error
-	if !errors.As(err, &pe) {
+	if !errors.As(err, &pe) || pe == nil {
 		slog.ErrorContext(r.Context(), "typed: handler error",
 			"err", err, "method", r.Method, "path", r.URL.Path)
 		pe = InternalServerError("internal server error")
 	}
+	out := *pe
+	if out.Status < 100 || out.Status > 599 {
+		out.Status = http.StatusInternalServerError
+	}
+	if out.Type == "" {
+		out.Type = "about:blank"
+	}
+	if out.Title == "" {
+		out.Title = http.StatusText(out.Status)
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(pe.Status)
-	_ = json.NewEncoder(w).Encode(pe)
+	w.WriteHeader(out.Status)
+	_ = json.NewEncoder(w).Encode(&out)
 }
