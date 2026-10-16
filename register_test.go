@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -359,4 +361,53 @@ func TestDuplicateRegexVsPlain(t *testing.T) {
 		Get(api, "/z/{id}", echoHandler)
 		Get(api, "/z/{id:[0-9]+}", echoHandler)
 	}, "duplicate")
+}
+
+func TestStatusValidation(t *testing.T) {
+	for _, code := range []int{0, 99, 600} {
+		mustPanic(t, func() {
+			api, _ := newTestAPI(t, Config{})
+			Get(api, "/x", okHandler, Status(code))
+		}, "GET /x: invalid status "+strconv.Itoa(code))
+	}
+	for _, code := range []int{204, 304} {
+		mustPanic(t, func() {
+			api, _ := newTestAPI(t, Config{})
+			Get(api, "/x", okHandler, Status(code))
+		}, "GET /x: status "+strconv.Itoa(code)+" must not have a response body")
+	}
+	api, _ := newTestAPI(t, Config{})
+	Delete(api, "/x", func(context.Context, *emptyIn) (*struct{}, error) { return nil, nil }, Status(204))
+	Get(api, "/y", okHandler, Status(299))
+}
+
+type floatOut struct {
+	V float64 `json:"v"`
+}
+
+func TestEncodeErrorIs500(t *testing.T) {
+	api, r := newTestAPI(t, Config{})
+	Get(api, "/nan", func(context.Context, *emptyIn) (*floatOut, error) {
+		return &floatOut{V: math.NaN()}, nil
+	}, Status(201))
+	w := do(r, "GET", "/nan", "")
+	if w.Code != 500 || w.Header().Get("Content-Type") != "application/problem+json" {
+		t.Fatalf("code=%d ct=%q body=%s", w.Code, w.Header().Get("Content-Type"), w.Body)
+	}
+	if !strings.Contains(w.Body.String(), `"status":500`) {
+		t.Fatalf("body = %s", w.Body)
+	}
+}
+
+func TestDuplicateOperationID(t *testing.T) {
+	mustPanic(t, func() {
+		api, _ := newTestAPI(t, Config{})
+		Get(api, "/x/{id}", echoHandler)
+		Get(api, "/x/by-id", okHandler)
+	}, `GET /x/by-id: duplicate operation ID "get-x-by-id"`)
+	mustPanic(t, func() {
+		api, _ := newTestAPI(t, Config{})
+		Get(api, "/a", okHandler, OperationID("same"))
+		Post(api, "/b", okHandler, OperationID("same"))
+	}, `POST /b: duplicate operation ID "same"`)
 }

@@ -102,6 +102,12 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 	for _, o := range opts {
 		o(&cfg)
 	}
+	if cfg.status < 100 || cfg.status > 599 {
+		fail("invalid status %d", cfg.status)
+	}
+	if !noContent && (cfg.status == http.StatusNoContent || cfg.status == http.StatusNotModified) {
+		fail("status %d must not have a response body", cfg.status)
+	}
 
 	s := api.s
 	specPath := specSuffix
@@ -117,7 +123,12 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 		s.mu.Unlock()
 		fail("%v", err)
 	}
+	if s.ids[op.OperationID] {
+		s.mu.Unlock()
+		fail("duplicate operation ID %q", op.OperationID)
+	}
 	s.ops[key] = true
+	s.ids[op.OperationID] = true
 	item := s.spec.Paths[specPath]
 	if item == nil {
 		item = &PathItem{}
@@ -162,9 +173,14 @@ func register[In, Out any](api *API, method, path string, h Handler[In, Out], op
 			api.handleError(w, r, InternalServerError("handler returned nil response"))
 			return
 		}
+		data, err := json.Marshal(out)
+		if err != nil {
+			api.handleError(w, r, err)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(out)
+		_, _ = w.Write(append(data, '\n'))
 	})
 }
 

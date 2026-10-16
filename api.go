@@ -39,6 +39,7 @@ type state struct {
 	spec *OpenAPI
 	reg  *registry
 	ops  map[string]bool // keys are "METHOD path"
+	ids  map[string]bool // operation IDs
 	mu   sync.Mutex
 }
 
@@ -79,6 +80,7 @@ func New(r chi.Router, cfg Config) *API {
 			},
 			reg: reg,
 			ops: map[string]bool{},
+			ids: map[string]bool{},
 		},
 	}
 	mountDocs(a)
