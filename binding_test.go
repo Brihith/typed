@@ -181,11 +181,25 @@ func TestNewInputPlanErrors(t *testing.T) {
 	type mapQuery struct {
 		A map[string]string `query:"a"`
 	}
+	type bytesQuery struct {
+		A []byte `query:"a"`
+	}
+	type dupQuery struct {
+		A string `query:"a"`
+		B int    `query:"a"`
+	}
+	type dupHeader struct {
+		A string `header:"x-id"`
+		B string `header:"X-Id"`
+	}
 	for name, typ := range map[string]reflect.Type{
-		"non-struct": reflect.TypeOf(1),
-		"both":       reflect.TypeOf(both{}),
-		"hdr slice":  reflect.TypeOf(hdrSlice{}),
-		"map query":  reflect.TypeOf(mapQuery{}),
+		"bytes query": reflect.TypeOf(bytesQuery{}),
+		"dup query":   reflect.TypeOf(dupQuery{}),
+		"dup header":  reflect.TypeOf(dupHeader{}),
+		"non-struct":  reflect.TypeOf(1),
+		"both":        reflect.TypeOf(both{}),
+		"hdr slice":   reflect.TypeOf(hdrSlice{}),
+		"map query":   reflect.TypeOf(mapQuery{}),
 	} {
 		if _, err := newInputPlan(typ); err == nil {
 			t.Errorf("%s: expected error", name)
@@ -229,5 +243,19 @@ func TestRequestBodySpec(t *testing.T) {
 	rb, _ = mustPlan(t, reflect.TypeOf(paramsIn{})).requestBody(g)
 	if rb != nil {
 		t.Fatal("expected nil body")
+	}
+}
+
+func TestBindBodyTypeError(t *testing.T) {
+	_, err := bindTo[bodyIn](t, newReq("POST", "/x", `{"name": 5}`, nil), 1<<20)
+	if err == nil || err.Status != 400 || err.Detail != "invalid JSON: body.name must be string" {
+		t.Fatalf("got %+v", err)
+	}
+	if strings.Contains(err.Detail, "Go") || strings.Contains(err.Detail, "int") {
+		t.Fatalf("leaks internals: %q", err.Detail)
+	}
+	_, err = bindTo[bodyIn](t, newReq("POST", "/x", `[1]`, nil), 1<<20)
+	if err == nil || err.Detail != "invalid JSON: body must be object" {
+		t.Fatalf("got %+v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package typed
 
 import (
+	"encoding"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -8,7 +9,10 @@ import (
 	"time"
 )
 
-var timeType = reflect.TypeOf(time.Time{})
+var (
+	timeType          = reflect.TypeOf(time.Time{})
+	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+)
 
 // registry turns Go types into schemas, collecting named structs as
 // reusable components.
@@ -67,6 +71,11 @@ func (g *registry) nameFor(t reflect.Type) (string, error) {
 func (g *registry) schemaFor(t reflect.Type) (*Schema, error) {
 	if t == timeType {
 		return &Schema{Type: "string", Format: "date-time"}, nil
+	}
+	if k := t.Kind(); k != reflect.Pointer && k != reflect.Interface &&
+		(t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType)) {
+		// encoding/json writes these as JSON strings.
+		return &Schema{Type: "string"}, nil
 	}
 	switch t.Kind() {
 	case reflect.Bool:

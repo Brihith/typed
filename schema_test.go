@@ -203,3 +203,14 @@ func TestSchemaSliceElementRules(t *testing.T) {
 		t.Errorf("got %s\nwant %s", got, want)
 	}
 }
+
+type textMarshalStruct struct{ A, B int }
+
+func (textMarshalStruct) MarshalText() ([]byte, error) { return []byte("x"), nil }
+
+func TestSchemaTextMarshaler(t *testing.T) {
+	s, err := newRegistry().schemaFor(reflect.TypeOf(textMarshalStruct{}))
+	if err != nil || s.Ref != "" || s.Type != "string" {
+		t.Fatalf("got %+v %v", s, err)
+	}
+}

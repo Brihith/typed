@@ -38,6 +38,7 @@ func newInputPlan(t reflect.Type) (*inputPlan, error) {
 		return nil, fmt.Errorf("typed: input type %s must be a struct", t)
 	}
 	p := &inputPlan{}
+	seen := map[string]bool{}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
@@ -70,6 +71,14 @@ func newInputPlan(t reflect.Type) (*inputPlan, error) {
 		if !supportedParamType(f.Type, loc == "query") {
 			return nil, fmt.Errorf("typed: field %s: unsupported %s parameter type %s", f.Name, loc, f.Type)
 		}
+		if loc == "header" {
+			name = http.CanonicalHeaderKey(name)
+		}
+		if key := loc + "." + name; seen[key] {
+			return nil, fmt.Errorf("typed: field %s: duplicate %s parameter %q", f.Name, loc, name)
+		} else {
+			seen[key] = true
+		}
 		r, err := parseRules(f)
 		if err != nil {
 			return nil, err
@@ -83,7 +92,8 @@ func newInputPlan(t reflect.Type) (*inputPlan, error) {
 // from several strings when slices is true.
 func supportedParamType(t reflect.Type, slices bool) bool {
 	if slices && t.Kind() == reflect.Slice {
-		return supportedParamType(t.Elem(), false)
+		// []byte would be documented as base64 but bound as a list.
+		return t.Elem().Kind() != reflect.Uint8 && supportedParamType(t.Elem(), false)
 	}
 	if reflect.PointerTo(t).Implements(textUnmarshalerType) {
 		return true
@@ -234,9 +244,43 @@ func (p *inputPlan) readBody(r *http.Request, fv reflect.Value, maxBody int64) *
 		}
 	}
 	if err := json.Unmarshal(data, fv.Addr().Interface()); err != nil {
-		return BadRequest("invalid JSON: " + err.Error())
+		return jsonError(err)
 	}
 	return nil
+}
+
+// jsonError describes a decode failure without exposing Go type names.
+func jsonError(err error) *Error {
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	switch {
+	case errors.As(err, &syn):
+		return BadRequest("invalid JSON: " + syn.Error())
+	case errors.As(err, &typ):
+		loc := "body"
+		if typ.Field != "" {
+			loc += "." + typ.Field
+		}
+		return BadRequest(fmt.Sprintf("invalid JSON: %s must be %s", loc, jsonKind(typ.Type)))
+	}
+	return BadRequest("invalid JSON")
+}
+
+func jsonKind(t reflect.Type) string {
+	switch t.Kind() {
+	case reflect.Bool:
+		return "boolean"
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "integer"
+	case reflect.Float32, reflect.Float64:
+		return "number"
+	case reflect.String:
+		return "string"
+	case reflect.Slice, reflect.Array:
+		return "array"
+	}
+	return "object"
 }
 
 // parameters returns the OpenAPI parameters of the input.
