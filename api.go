@@ -119,6 +119,3 @@ func (a *API) handleError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	writeError(w, r, err)
 }
-
-// mountDocs is implemented in a later step.
-func mountDocs(a *API) {}
